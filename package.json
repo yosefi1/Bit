@@ -5,7 +5,7 @@
   "description": "Full-stack web app for managing electricity payments for rental apartments, with OCR meter readings and Bit payment integration.",
   "scripts": {
     "dev": "next dev",
-    "build": "prisma generate && prisma db push --skip-generate && next build",
+    "build": "prisma generate && node scripts/prisma-push-if-db.mjs && next build",
     "start": "next start",
     "lint": "next lint",
     "postinstall": "prisma generate",
