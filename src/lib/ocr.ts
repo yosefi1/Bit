@@ -1,4 +1,5 @@
 import { createWorker } from "tesseract.js";
+import { extractAllNumbers, pickBestReading } from "./ocr-meter";
 
 export interface OcrResult {
   reading: number | null;
@@ -10,42 +11,6 @@ export interface OcrResult {
 export interface OcrOptions {
   /** Previous meter reading — helps pick the most likely candidate. */
   previousReading?: number;
-}
-
-function extractAllNumbers(text: string): number[] {
-  if (!text) return [];
-  const matches = text.match(/\d{2,8}(?:[.,]\d{1,3})?/g);
-  if (!matches?.length) return [];
-  const nums: number[] = [];
-  for (const m of matches) {
-    const n = Number(m.replace(",", "."));
-    if (Number.isFinite(n)) nums.push(n);
-  }
-  return nums;
-}
-
-function pickBestReading(candidates: number[], previousReading?: number): number | null {
-  if (!candidates.length) return null;
-  const unique = [...new Set(candidates)];
-
-  if (previousReading != null && Number.isFinite(previousReading)) {
-    const abovePrev = unique.filter((n) => n >= previousReading);
-    if (abovePrev.length) {
-      abovePrev.sort(
-        (a, b) =>
-          Math.abs(a - previousReading) - Math.abs(b - previousReading) ||
-          b - a
-      );
-      return abovePrev[0];
-    }
-  }
-
-  unique.sort((a, b) => {
-    const lenDiff = String(Math.trunc(b)).length - String(Math.trunc(a)).length;
-    if (lenDiff !== 0) return lenDiff;
-    return b - a;
-  });
-  return unique[0];
 }
 
 function extractMeterNumber(text: string, previousReading?: number): number | null {

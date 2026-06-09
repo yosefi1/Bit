@@ -10,6 +10,11 @@ import { Camera, RefreshCw, Smartphone, X } from "lucide-react";
 import { formatCurrency, formatKwh, formatRateShekels } from "@/lib/utils";
 import { he } from "@/lib/i18n/he";
 import { readMeterClientSide } from "@/lib/client-ocr";
+import {
+  isPlausibleReading,
+  pickBestReading,
+  shouldAutoFillOcr,
+} from "@/lib/ocr-meter";
 import { buildBitClipboardText, buildBitOpenUrl } from "@/lib/bit-utils";
 
 interface OcrResult {
@@ -55,6 +60,7 @@ export function SubmitReadingFlow({
   const [reading, setReading] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const [ocrSuggestion, setOcrSuggestion] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const readingNum = Number(reading);
@@ -78,6 +84,7 @@ export function SubmitReadingFlow({
     setWarning(null);
     setUploaded(null);
     setReading("");
+    setOcrSuggestion(null);
 
     try {
       const [clientOcr, uploadRes] = await Promise.all([
@@ -96,23 +103,44 @@ export function SubmitReadingFlow({
       }
 
       const server = uploadData as UploadResponse;
-      const ocr =
-        clientOcr?.reading != null
-          ? {
-              reading: clientOcr.reading,
-              confidence: clientOcr.confidence,
-              rawText: clientOcr.rawText,
-              provider: clientOcr.provider,
-            }
-          : server.ocr;
+      const candidates = [clientOcr?.reading, server.ocr.reading].filter(
+        (n): n is number => n != null && Number.isFinite(n)
+      );
+      const mergedReading = pickBestReading(candidates, previousReading);
+      const mergedConfidence = Math.max(
+        server.ocr.provider === "openai" && server.ocr.reading === mergedReading
+          ? (server.ocr.confidence ?? 0)
+          : 0,
+        clientOcr?.reading === mergedReading ? (clientOcr.confidence ?? 0) : 0,
+        server.ocr.reading === mergedReading ? (server.ocr.confidence ?? 0) : 0
+      );
+      const ocr: OcrResult = {
+        reading: mergedReading,
+        confidence: mergedReading != null ? mergedConfidence || null : null,
+        rawText: [clientOcr?.rawText, server.ocr.rawText].filter(Boolean).join(" | "),
+        provider:
+          server.ocr.provider === "openai" && server.ocr.reading === mergedReading
+            ? server.ocr.provider
+            : clientOcr?.reading === mergedReading
+              ? clientOcr.provider
+              : server.ocr.provider,
+      };
 
       setUploaded({ file: server.file, ocr });
 
-      if (ocr.reading != null) {
-        setReading(String(ocr.reading));
-        if (ocr.reading < previousReading) setWarning(he.submit.ocrLow);
-      } else {
+      if (ocr.reading == null) {
         setWarning(he.submit.ocrFailed);
+      } else if (ocr.reading < previousReading) {
+        setOcrSuggestion(ocr.reading);
+        setWarning(he.submit.ocrLow);
+      } else if (shouldAutoFillOcr(ocr.reading, ocr.confidence, previousReading)) {
+        setReading(String(ocr.reading));
+      } else if (isPlausibleReading(ocr.reading, previousReading)) {
+        setOcrSuggestion(ocr.reading);
+        setWarning(he.submit.ocrVerify);
+      } else {
+        setOcrSuggestion(null);
+        setWarning(he.submit.ocrUnreliable);
       }
     } finally {
       setUploading(false);
@@ -140,6 +168,7 @@ export function SubmitReadingFlow({
     setReading("");
     setError(null);
     setWarning(null);
+    setOcrSuggestion(null);
     setDragOver(false);
     if (fileInput.current) fileInput.current.value = "";
   }
@@ -300,6 +329,17 @@ export function SubmitReadingFlow({
                   : he.submit.noReading}
               </strong>
             </div>
+          )}
+
+          {ocrSuggestion != null && reading !== String(ocrSuggestion) && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setReading(String(ocrSuggestion))}
+            >
+              {he.submit.useOcrSuggestion}: {formatKwh(ocrSuggestion)}
+            </Button>
           )}
 
           <div>
