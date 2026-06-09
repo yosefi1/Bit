@@ -37,3 +37,4 @@ next-env.d.ts
 
 # Tesseract (downloaded at runtime by tesseract.js)
 *.traineddata
+.vercel

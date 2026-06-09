@@ -31,11 +31,22 @@ function extractMeterNumber(text: string): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function tesseractOptions() {
+  const base = { logger: () => {} };
+  if (!process.env.VERCEL) return base;
+  // Load workers from CDN — bundled paths break on Vercel serverless.
+  return {
+    ...base,
+    workerPath:
+      "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js",
+    langPath: "https://tessdata.projectnaptha.com/4.0.0",
+    corePath:
+      "https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core.wasm.js",
+  };
+}
+
 async function runTesseract(buffer: Buffer): Promise<OcrResult> {
-  const worker = await createWorker("eng", 1, {
-    // Suppress Tesseract's noisy stdout in dev
-    logger: () => {},
-  });
+  const worker = await createWorker("eng", 1, tesseractOptions());
   try {
     // Tesseract is most accurate on meter digits when we restrict to digits.
     await worker.setParameters({

@@ -169,6 +169,7 @@ export const he = {
     step1: "1. צילום המונה",
     step2: "2. אישור הקריאה",
     uploadHint: "לחץ לצילום או גרור תמונה",
+    dropHere: "שחרר את התמונה כאן",
     uploadFormats: "JPEG / PNG / WebP, עד 10 מ״ב",
     chooseImage: "בחירת תמונה",
     readMeter: "קריאת מונה",
