@@ -13,6 +13,25 @@ export interface StoredFile {
 
 const UPLOAD_DIR_REL = "uploads";
 
+function hasBlobAuth(): boolean {
+  return !!(
+    process.env.BLOB_READ_WRITE_TOKEN ||
+    process.env.VERCEL_BLOB_READ_WRITE_TOKEN ||
+    (process.env.BLOB_STORE_ID && process.env.VERCEL) ||
+    process.env.VERCEL_OIDC_TOKEN
+  );
+}
+
+function blobPutOptions(contentType: string) {
+  const token =
+    process.env.BLOB_READ_WRITE_TOKEN ?? process.env.VERCEL_BLOB_READ_WRITE_TOKEN;
+  return {
+    contentType,
+    addRandomSuffix: false,
+    ...(token ? { token } : {}),
+  };
+}
+
 function safeExt(name: string, contentType: string): string {
   const fromName = path.extname(name).toLowerCase();
   if (fromName) return fromName;
@@ -29,18 +48,27 @@ function preferBlobStorage(): boolean {
   return !!process.env.VERCEL;
 }
 
+function meterImageProxyUrl(pathname: string): string {
+  return `/api/meter-image?pathname=${encodeURIComponent(pathname)}`;
+}
+
 async function saveToBlob(
   relPath: string,
   buffer: Buffer,
   contentType: string,
   originalName: string
 ): Promise<StoredFile | null> {
+  if (!hasBlobAuth()) {
+    console.warn(
+      "[storage] Blob not configured — connect store to project (BLOB_STORE_ID) and Redeploy."
+    );
+    return null;
+  }
+
+  const putOpts = blobPutOptions(contentType);
+
   try {
-    const blob = await put(relPath, buffer, {
-      access: "public",
-      contentType,
-      addRandomSuffix: false,
-    });
+    const blob = await put(relPath, buffer, { ...putOpts, access: "public" });
     return {
       url: blob.url,
       pathname: blob.pathname,
@@ -48,9 +76,21 @@ async function saveToBlob(
       contentType,
       originalName,
     };
-  } catch (err) {
-    console.warn("[storage] Vercel Blob upload failed:", err);
-    return null;
+  } catch (publicErr) {
+    console.warn("[storage] Public blob upload failed, trying private:", publicErr);
+    try {
+      const blob = await put(relPath, buffer, { ...putOpts, access: "private" });
+      return {
+        url: meterImageProxyUrl(blob.pathname),
+        pathname: blob.pathname,
+        size: buffer.byteLength,
+        contentType,
+        originalName,
+      };
+    } catch (privateErr) {
+      console.warn("[storage] Private blob upload failed:", privateErr);
+      return null;
+    }
   }
 }
 

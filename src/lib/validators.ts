@@ -89,7 +89,7 @@ export const billingCycleUpdateSchema = z.object({
 export const submissionCreateSchema = z.object({
   billingCycleId: z.string().min(1),
   confirmedReading: z.coerce.number().min(0),
-  imageUrl: z.string().optional().nullable(),
+  imageUrl: z.string().min(1, "תמונת מונה חובה"),
   imageOriginalName: z.string().optional().nullable(),
   ocrReading: z.coerce.number().min(0).optional().nullable(),
   ocrConfidence: z.coerce.number().min(0).max(1).optional().nullable(),

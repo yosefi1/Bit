@@ -91,36 +91,27 @@ export async function POST(req: NextRequest) {
       throw new ApiError("BAD_REQUEST", he.errors.consumptionTooHigh);
     }
 
-    const submission = await prisma.$transaction(async (tx) => {
-      const created = await tx.submission.create({
-        data: {
-          apartmentId,
-          billingCycleId: cycle.id,
-          previousReading,
-          ocrReading: input.ocrReading ?? null,
-          ocrConfidence: input.ocrConfidence ?? null,
-          ocrRawText: input.ocrRawText ?? null,
-          confirmedReading: input.confirmedReading,
-          consumption,
-          ratePerKwh,
-          amountDue,
-          imageUrl: input.imageUrl ?? null,
-          imageOriginalName: input.imageOriginalName ?? null,
-          status: "APPROVED",
-          reviewedAt: new Date(),
-        },
-        include: { apartment: true, billingCycle: true },
-      });
+    if (!input.imageUrl?.trim()) {
+      throw new ApiError("BAD_REQUEST", he.submit.imageRequired);
+    }
 
-      await tx.payment.create({
-        data: {
-          submissionId: created.id,
-          amount: amountDue,
-          status: "PENDING",
-        },
-      });
-
-      return created;
+    const submission = await prisma.submission.create({
+      data: {
+        apartmentId,
+        billingCycleId: cycle.id,
+        previousReading,
+        ocrReading: input.ocrReading ?? null,
+        ocrConfidence: input.ocrConfidence ?? null,
+        ocrRawText: input.ocrRawText ?? null,
+        confirmedReading: input.confirmedReading,
+        consumption,
+        ratePerKwh,
+        amountDue,
+        imageUrl: input.imageUrl,
+        imageOriginalName: input.imageOriginalName ?? null,
+        status: "PENDING",
+      },
+      include: { apartment: true, billingCycle: true },
     });
 
     await writeAuditLog({

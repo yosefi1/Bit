@@ -6,26 +6,27 @@ import { Card, CardBody, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Alert } from "@/components/ui/Alert";
-import { Camera, RefreshCw, Send, X } from "lucide-react";
+import { Camera, RefreshCw, Smartphone, X } from "lucide-react";
 import { formatCurrency, formatKwh, formatRateShekels } from "@/lib/utils";
 import { he } from "@/lib/i18n/he";
+import { readMeterClientSide } from "@/lib/client-ocr";
+import { buildBitClipboardText, buildBitOpenUrl } from "@/lib/bit-utils";
 
 interface OcrResult {
   reading: number | null;
   confidence: number | null;
   rawText: string;
-  provider: "tesseract" | "openai" | "none";
+  provider: string;
 }
 
 interface UploadResponse {
   file: {
-    url: string | null;
+    url: string;
     originalName: string;
     contentType: string;
     size: number;
   };
   ocr: OcrResult;
-  storageWarning?: string | null;
 }
 
 function isImageFile(f: File): boolean {
@@ -37,10 +38,12 @@ export function SubmitReadingFlow({
   cycleId,
   ratePerKwh,
   previousReading,
+  apartmentName,
 }: {
   cycleId: string;
   ratePerKwh: number;
   previousReading: number;
+  apartmentName: string;
 }) {
   const router = useRouter();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -57,6 +60,7 @@ export function SubmitReadingFlow({
   const readingNum = Number(reading);
   const valid =
     Number.isFinite(readingNum) && readingNum >= previousReading;
+  const hasSavedImage = !!uploaded?.file.url;
 
   const calc = useMemo(() => {
     if (!valid) return null;
@@ -68,35 +72,47 @@ export function SubmitReadingFlow({
     };
   }, [valid, readingNum, previousReading, ratePerKwh]);
 
-  async function runOcrForFile(f: File) {
+  async function processFile(f: File) {
     setUploading(true);
     setError(null);
     setWarning(null);
     setUploaded(null);
     setReading("");
+
     try {
-      const fd = new FormData();
-      fd.append("file", f);
-      const res = await fetch("/api/upload", { method: "POST", body: fd });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data?.error?.message || he.submit.uploadFailed);
+      const [clientOcr, uploadRes] = await Promise.all([
+        readMeterClientSide(f, previousReading).catch(() => null),
+        fetch("/api/upload", { method: "POST", body: (() => {
+          const fd = new FormData();
+          fd.append("file", f);
+          return fd;
+        })() }),
+      ]);
+
+      const uploadData = await uploadRes.json();
+      if (!uploadRes.ok) {
+        setError(uploadData?.error?.message || he.submit.uploadFailed);
         return;
       }
-      const result = data as UploadResponse;
-      setUploaded(result);
-      if (result.ocr.reading != null) {
-        setReading(String(result.ocr.reading));
-        if (result.ocr.reading < previousReading) {
-          setWarning(he.submit.ocrLow);
-        }
+
+      const server = uploadData as UploadResponse;
+      const ocr =
+        clientOcr?.reading != null
+          ? {
+              reading: clientOcr.reading,
+              confidence: clientOcr.confidence,
+              rawText: clientOcr.rawText,
+              provider: clientOcr.provider,
+            }
+          : server.ocr;
+
+      setUploaded({ file: server.file, ocr });
+
+      if (ocr.reading != null) {
+        setReading(String(ocr.reading));
+        if (ocr.reading < previousReading) setWarning(he.submit.ocrLow);
       } else {
         setWarning(he.submit.ocrFailed);
-      }
-      if (result.storageWarning) {
-        setWarning((w) =>
-          w ? `${w} ${result.storageWarning}` : result.storageWarning ?? null
-        );
       }
     } finally {
       setUploading(false);
@@ -104,8 +120,6 @@ export function SubmitReadingFlow({
   }
 
   async function handleFile(f: File) {
-    setError(null);
-    setWarning(null);
     if (!isImageFile(f)) {
       setError(he.submit.imageTypeError);
       return;
@@ -116,27 +130,7 @@ export function SubmitReadingFlow({
     }
     setFile(f);
     setPreview(URL.createObjectURL(f));
-    await runOcrForFile(f);
-  }
-
-  function onDragOver(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(true);
-  }
-
-  function onDragLeave(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-  }
-
-  function onDrop(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragOver(false);
-    const f = e.dataTransfer.files?.[0];
-    if (f) void handleFile(f);
+    await processFile(f);
   }
 
   function reset() {
@@ -150,8 +144,11 @@ export function SubmitReadingFlow({
     if (fileInput.current) fileInput.current.value = "";
   }
 
-  async function submit() {
-    if (!calc || !valid) return;
+  async function submitAndOpenBit() {
+    if (!calc || !valid || !uploaded?.file.url) {
+      setError(he.submit.imageRequired);
+      return;
+    }
     setError(null);
     setSubmitting(true);
     try {
@@ -161,11 +158,11 @@ export function SubmitReadingFlow({
         body: JSON.stringify({
           billingCycleId: cycleId,
           confirmedReading: readingNum,
-          imageUrl: uploaded?.file.url ?? undefined,
-          imageOriginalName: uploaded?.file.originalName,
-          ocrReading: uploaded?.ocr.reading,
-          ocrConfidence: uploaded?.ocr.confidence,
-          ocrRawText: uploaded?.ocr.rawText,
+          imageUrl: uploaded.file.url,
+          imageOriginalName: uploaded.file.originalName,
+          ocrReading: uploaded.ocr.reading,
+          ocrConfidence: uploaded.ocr.confidence,
+          ocrRawText: uploaded.ocr.rawText,
         }),
       });
       const data = await res.json();
@@ -173,7 +170,24 @@ export function SubmitReadingFlow({
         setError(data?.error?.message || he.submit.submissionFailed);
         return;
       }
-      router.push(`/dashboard/submission/${data.submission.id}?just=1#pay`);
+
+      const bitRes = await fetch("/api/settings/bit");
+      const bitData = await bitRes.json();
+      const bit = bitData.config as { phone: string; name: string };
+      const clip = buildBitClipboardText({
+        phone: bit.phone,
+        name: bit.name,
+        amount: calc.amount,
+        reference: apartmentName,
+      });
+      try {
+        await navigator.clipboard.writeText(clip);
+      } catch {
+        // clipboard optional
+      }
+      window.location.href = buildBitOpenUrl(navigator.userAgent);
+
+      router.push(`/dashboard/submission/${data.submission.id}?just=1`);
       router.refresh();
     } finally {
       setSubmitting(false);
@@ -195,9 +209,17 @@ export function SubmitReadingFlow({
               onKeyDown={(e) => {
                 if (e.key === "Enter" || e.key === " ") fileInput.current?.click();
               }}
-              onDragOver={onDragOver}
-              onDragLeave={onDragLeave}
-              onDrop={onDrop}
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragOver(false);
+                const f = e.dataTransfer.files?.[0];
+                if (f) void handleFile(f);
+              }}
               className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-10 text-center transition-colors ${
                 dragOver
                   ? "border-brand-500 bg-brand-50"
@@ -209,6 +231,7 @@ export function SubmitReadingFlow({
                 {dragOver ? he.submit.dropHere : he.submit.uploadHint}
               </div>
               <div className="text-xs text-slate-500">{he.submit.uploadFormats}</div>
+              <div className="text-xs font-medium text-brand-700">{he.submit.imageRequiredHint}</div>
             </div>
           ) : (
             <div className="relative overflow-hidden rounded-lg border border-slate-200">
@@ -235,24 +258,28 @@ export function SubmitReadingFlow({
             }}
           />
 
-          <div className="flex flex-wrap gap-2">
-            {preview && (
-              <>
-                <Button
-                  variant="secondary"
-                  onClick={() => file && runOcrForFile(file)}
-                  disabled={uploading || !file}
-                >
-                  <RefreshCw className={`h-4 w-4 ${uploading ? "animate-spin" : ""}`} />
-                  {he.submit.readMeter}
-                </Button>
-                <Button variant="ghost" onClick={reset} disabled={uploading}>
-                  <X className="h-4 w-4" />
-                  {he.submit.remove}
-                </Button>
-              </>
-            )}
-          </div>
+          {preview && (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => file && processFile(file)}
+                disabled={uploading || !file}
+              >
+                <RefreshCw className={`h-4 w-4 ${uploading ? "animate-spin" : ""}`} />
+                {he.submit.readMeter}
+              </Button>
+              <Button variant="ghost" onClick={reset} disabled={uploading}>
+                <X className="h-4 w-4" />
+                {he.submit.remove}
+              </Button>
+            </div>
+          )}
+
+          {hasSavedImage && (
+            <Alert tone="success" title={he.submit.imageSaved}>
+              {he.submit.imageSavedDesc}
+            </Alert>
+          )}
 
           {error && <Alert tone="danger">{error}</Alert>}
           {warning && <Alert tone="warning">{warning}</Alert>}
@@ -272,13 +299,6 @@ export function SubmitReadingFlow({
                   ? formatKwh(uploaded.ocr.reading)
                   : he.submit.noReading}
               </strong>
-              {uploaded.ocr.confidence != null && (
-                <>
-                  {" "}
-                  · {he.submit.confidence}{" "}
-                  {Math.round(uploaded.ocr.confidence * 100)}%
-                </>
-              )}
             </div>
           )}
 
@@ -295,17 +315,12 @@ export function SubmitReadingFlow({
               onChange={(e) => setReading(e.target.value)}
               placeholder={`למשל ${(previousReading + 100).toFixed(0)}`}
               className="mt-1 text-lg"
-              disabled={uploading}
+              disabled={uploading || !hasSavedImage}
             />
             <p className="mt-1 text-xs text-slate-500">
               {he.submit.previousHint}:{" "}
               <strong>{formatKwh(previousReading)}</strong>. {he.submit.mustBeHigher}
             </p>
-            {reading && !valid && (
-              <Alert tone="danger" className="mt-2">
-                {he.submit.mustBeHigher}
-              </Alert>
-            )}
           </div>
 
           {calc && (
@@ -314,32 +329,22 @@ export function SubmitReadingFlow({
                 {he.submit.calcSummary}
               </h4>
               <dl className="mt-3 space-y-2 text-sm">
-                <Line k={he.submit.currentReading} v={formatKwh(readingNum)} />
-                <Line k={he.submit.previousHint} v={formatKwh(previousReading)} />
-                <Line k={he.submit.consumption} v={formatKwh(calc.consumption)} />
-                <Line k={he.submit.ratePerKwh} v={formatRateShekels(ratePerKwh)} />
-                <div className="my-2 border-t border-brand-200" />
-                <Line
-                  k={he.submit.amountDue}
-                  v={
-                    <span className="text-lg font-semibold text-brand-900">
-                      {formatCurrency(calc.amount)}
-                    </span>
-                  }
-                />
+                <Line k={he.submit.amountDue} v={formatCurrency(calc.amount)} />
               </dl>
             </div>
           )}
 
           <Button
-            onClick={submit}
-            disabled={!valid || submitting || uploading}
+            onClick={submitAndOpenBit}
+            disabled={!valid || !hasSavedImage || submitting || uploading}
             size="lg"
             fullWidth
+            className="min-h-14"
           >
-            <Send className="h-4 w-4" />
+            <Smartphone className="h-5 w-5" />
             {submitting ? he.submit.submitting : he.submit.submit}
           </Button>
+          <p className="text-xs text-slate-500">{he.submit.flowHint}</p>
         </CardBody>
       </Card>
     </div>

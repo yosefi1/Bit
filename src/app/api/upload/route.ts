@@ -38,25 +38,21 @@ export async function POST(req: NextRequest) {
     });
 
     const stored = await saveImage(file, { folder: "meters" });
+    if (!stored) {
+      throw new ApiError(
+        "INTERNAL",
+        "לא ניתן לשמור את התמונה. ודא ש-Vercel Blob מחובר ועשה Redeploy."
+      );
+    }
 
     return ok({
-      file: stored
-        ? {
-            url: stored.url,
-            originalName: stored.originalName,
-            contentType: stored.contentType,
-            size: stored.size,
-          }
-        : {
-            url: null,
-            originalName: file.name,
-            contentType: file.type || "image/jpeg",
-            size: buf.byteLength,
-          },
+      file: {
+        url: stored.url,
+        originalName: stored.originalName,
+        contentType: stored.contentType,
+        size: stored.size,
+      },
       ocr,
-      storageWarning: stored
-        ? null
-        : "התמונה לא נשמרה — ודא ש-Vercel Blob מחובר ועשה Redeploy.",
     });
   } catch (err) {
     return errorResponse(err);
