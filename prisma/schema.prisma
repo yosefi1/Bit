@@ -1,0 +1,215 @@
+// Prisma schema for the Apartment Electricity Payment Manager.
+//
+// Local development uses SQLite for zero-config bootstrap.
+// To deploy to Vercel + Supabase/Neon, change `provider` to "postgresql"
+// and set `DATABASE_URL` (and optionally `DIRECT_URL`) accordingly.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+  // For PostgreSQL on Vercel, replace the two lines above with:
+  // provider  = "postgresql"
+  // url       = env("DATABASE_URL")
+  // directUrl = env("DIRECT_URL")
+}
+
+// ----------------------------- Enums -------------------------------------
+
+enum Role {
+  TENANT
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ApartmentStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum UtilityType {
+  ELECTRICITY
+  WATER       // reserved for future versions
+  GAS         // reserved for future versions
+  MAINTENANCE // reserved for future versions
+}
+
+enum CycleStatus {
+  OPEN
+  CLOSED
+}
+
+enum SubmissionStatus {
+  PENDING   // tenant submitted, awaiting admin review
+  APPROVED  // admin approved -> tenant can pay
+  REJECTED  // admin rejected (tenant must resubmit)
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  CANCELLED
+}
+
+// ----------------------------- Models ------------------------------------
+
+/// Application users. A tenant is bound 1:1 to an apartment; admins are free-floating.
+model User {
+  id          String     @id @default(cuid())
+  username    String     @unique
+  password    String // bcrypt hash
+  name        String
+  email       String? // for future email notifications (NOT used for login)
+  role        Role       @default(TENANT)
+  status      UserStatus @default(ACTIVE)
+
+  apartmentId String?    @unique
+  apartment   Apartment? @relation(fields: [apartmentId], references: [id], onDelete: SetNull)
+
+  auditLogs   AuditLog[]
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+/// A rental apartment. Each apartment has at most one active tenant user.
+model Apartment {
+  id                   String          @id @default(cuid())
+  name                 String          @unique // e.g. "Apt 3B"
+  notes                String?
+  status               ApartmentStatus @default(ACTIVE)
+
+  /// Reading recorded when the apartment was added. Used as `previousReading`
+  /// for the very first submission if there is no prior approved submission.
+  initialMeterReading  Float           @default(0)
+
+  tenant               User?
+  submissions          Submission[]
+
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+}
+
+/// A billing cycle. The admin enters the total bill amount + master meter
+/// readings, and the system computes the per-kWh rate that applies to all
+/// apartment submissions within this cycle.
+model BillingCycle {
+  id                  String       @id @default(cuid())
+  label               String       @unique // e.g. "2026-03" or "March 2026"
+  utility             UtilityType  @default(ELECTRICITY)
+
+  totalBillAmount     Float
+  masterMeterPrevious Float
+  masterMeterCurrent  Float
+  /// totalConsumption = masterMeterCurrent - masterMeterPrevious
+  totalConsumption    Float
+  /// ratePerKwh = totalBillAmount / totalConsumption
+  ratePerKwh          Float
+
+  startDate           DateTime
+  endDate             DateTime
+  status              CycleStatus  @default(OPEN)
+  notes               String?
+
+  submissions         Submission[]
+
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+}
+
+/// A meter reading submitted by a tenant for a given billing cycle.
+model Submission {
+  id                  String            @id @default(cuid())
+
+  apartmentId         String
+  apartment           Apartment         @relation(fields: [apartmentId], references: [id], onDelete: Cascade)
+
+  billingCycleId      String
+  billingCycle        BillingCycle      @relation(fields: [billingCycleId], references: [id], onDelete: Cascade)
+
+  /// Previous reading carried over from prior approved submission, or
+  /// from apartment.initialMeterReading on first-ever submission.
+  previousReading     Float
+
+  /// What OCR detected (null if OCR failed or wasn't run).
+  ocrReading          Float?
+  ocrConfidence       Float?
+  ocrRawText          String?
+
+  /// The final value the tenant confirmed. Always used for the calculation.
+  confirmedReading    Float
+
+  consumption         Float
+  ratePerKwh          Float // snapshot of cycle rate at submission time
+  amountDue           Float
+
+  imageUrl            String?
+  imageOriginalName   String?
+
+  status              SubmissionStatus  @default(PENDING)
+  rejectionReason     String?
+  adminComment        String?
+
+  payment             Payment?
+
+  submittedAt         DateTime          @default(now())
+  reviewedAt          DateTime?
+
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  @@index([apartmentId, billingCycleId])
+  @@index([billingCycleId, status])
+}
+
+/// Payment record for an approved submission.
+model Payment {
+  id            String        @id @default(cuid())
+
+  submissionId  String        @unique
+  submission    Submission    @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  amount        Float
+  status        PaymentStatus @default(PENDING)
+  method        String? // "bit" | "manual" | ...
+  reference     String?
+  paidAt        DateTime?
+  notes         String?
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+}
+
+/// Key/value application settings. Used for Bit payment recipient info,
+/// global instructions, default rates, etc. Editable from the admin UI.
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+/// Append-only audit trail of important user actions.
+model AuditLog {
+  id         String   @id @default(cuid())
+
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  action     String // e.g. "user.login", "submission.approve"
+  entityType String? // "Apartment" | "Submission" | ...
+  entityId   String?
+  details    String? // JSON blob with arbitrary context
+  ipAddress  String?
+
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId, createdAt])
+}
