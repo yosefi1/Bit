@@ -9,6 +9,11 @@ import { StatusBadge } from "@/components/ui/StatusBadge";
 import { Smartphone, Copy, Check } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { he } from "@/lib/i18n/he";
+import {
+  buildBitClipboardText,
+  buildBitOpenUrl,
+  formatBitPhone,
+} from "@/lib/bit-utils";
 
 interface BitConfig {
   phone: string;
@@ -33,15 +38,31 @@ export function PayWithBit({
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [opened, setOpened] = useState(false);
+
+  const phone = formatBitPhone(bit.phone);
+  const paymentText = buildBitClipboardText({
+    phone,
+    name: bit.name,
+    amount,
+    reference: apartmentName,
+  });
 
   async function copy(label: string, text: string) {
     try {
       await navigator.clipboard.writeText(text);
       setCopied(label);
-      setTimeout(() => setCopied(null), 1500);
+      setTimeout(() => setCopied(null), 2000);
     } catch {
       // ignore
     }
+  }
+
+  async function openBit() {
+    await copy("all", paymentText);
+    setOpened(true);
+    const url = buildBitOpenUrl(navigator.userAgent);
+    window.location.href = url;
   }
 
   async function markPaid() {
@@ -64,8 +85,6 @@ export function PayWithBit({
     }
   }
 
-  const telLink = `tel:${bit.phone.replace(/\D/g, "")}`;
-
   return (
     <Card>
       <CardHeader>
@@ -74,120 +93,62 @@ export function PayWithBit({
       </CardHeader>
       <CardBody className="space-y-4">
         {error && <Alert tone="danger">{error}</Alert>}
+        {opened && (
+          <Alert tone="success" title={he.bit.copiedTitle}>
+            {he.bit.copiedDesc}
+          </Alert>
+        )}
 
-        <div className="rounded-lg bg-slate-50 p-4">
-          <div className="text-xs uppercase tracking-wide text-slate-500">
+        <div className="rounded-lg bg-brand-50 p-4 text-center">
+          <div className="text-xs uppercase tracking-wide text-brand-700">
             {he.bit.amountToSend}
           </div>
-          <div className="mt-1 flex items-center justify-between gap-3">
-            <div className="text-3xl font-bold text-slate-900">
-              {formatCurrency(amount)}
-            </div>
-            <button
-              type="button"
-              onClick={() => copy("amount", amount.toFixed(2))}
-              className="shrink-0 rounded-md border border-slate-300 bg-white p-2 text-slate-500 hover:bg-slate-50"
-              aria-label={he.common.copy}
-            >
-              {copied === "amount" ? (
-                <Check className="h-4 w-4 text-emerald-600" />
-              ) : (
-                <Copy className="h-4 w-4" />
-              )}
-            </button>
+          <div className="mt-1 text-3xl font-bold text-brand-900" dir="ltr">
+            {formatCurrency(amount)}
+          </div>
+          <div className="mt-2 text-sm text-brand-800" dir="ltr">
+            {phone} · {bit.name}
           </div>
         </div>
-
-        <dl className="space-y-3 text-sm">
-          <Field
-            label={he.bit.recipientPhone}
-            value={bit.phone}
-            onCopy={() => copy("phone", bit.phone)}
-            copied={copied === "phone"}
-            dir="ltr"
-          />
-          <Field
-            label={he.bit.recipientName}
-            value={bit.name}
-            onCopy={() => copy("name", bit.name)}
-            copied={copied === "name"}
-          />
-          <Field
-            label={he.bit.reference}
-            value={apartmentName}
-            onCopy={() => copy("ref", apartmentName)}
-            copied={copied === "ref"}
-          />
-        </dl>
 
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-amber-900">
           {bit.instructions}
         </div>
 
-        {/* עמודה צרה — כפתורים מלאים אחד מתחת לשני */}
         <div className="flex flex-col gap-3">
-          <a
-            href={telLink}
-            className="inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-brand-600 px-4 py-3 text-center text-sm font-medium leading-normal text-white transition hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1"
+          <Button
+            type="button"
+            size="lg"
+            fullWidth
+            onClick={openBit}
+            disabled={status === "PAID"}
+            className="min-h-14"
           >
-            <Smartphone className="h-5 w-5 shrink-0" aria-hidden />
-            <span>{he.bit.openBit}</span>
-          </a>
+            <Smartphone className="h-5 w-5 shrink-0" />
+            {he.bit.openBitPay}
+          </Button>
+          <Button
+            variant="outline"
+            fullWidth
+            onClick={() => copy("amount", amount.toFixed(2))}
+          >
+            {copied === "amount" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            {he.bit.copyAmount}
+          </Button>
           <Button
             variant="success"
             size="lg"
             fullWidth
             onClick={markPaid}
             disabled={busy || status === "PAID"}
-            className="w-full whitespace-normal text-center"
           >
-            <Check className="h-5 w-5 shrink-0" aria-hidden />
-            <span>{status === "PAID" ? he.bit.paid : he.bit.markPaid}</span>
+            <Check className="h-5 w-5 shrink-0" />
+            {status === "PAID" ? he.bit.paid : he.bit.markPaid}
           </Button>
         </div>
 
         <p className="text-xs leading-relaxed text-slate-500">{he.bit.note}</p>
       </CardBody>
     </Card>
-  );
-}
-
-function Field({
-  label,
-  value,
-  onCopy,
-  copied,
-  dir,
-}: {
-  label: string;
-  value: string;
-  onCopy: () => void;
-  copied?: boolean;
-  dir?: "ltr" | "rtl";
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 border-b border-slate-100 pb-2 last:border-b-0 last:pb-0">
-      <div className="min-w-0 flex-1">
-        <dt className="text-xs uppercase tracking-wide text-slate-500">{label}</dt>
-        <dd
-          className="truncate font-mono text-sm font-medium text-slate-900"
-          dir={dir}
-        >
-          {value}
-        </dd>
-      </div>
-      <button
-        type="button"
-        onClick={onCopy}
-        className="shrink-0 rounded-md border border-slate-300 bg-white p-2 text-slate-500 hover:bg-slate-50"
-        aria-label={`${he.common.copy} ${label}`}
-      >
-        {copied ? (
-          <Check className="h-4 w-4 text-emerald-600" />
-        ) : (
-          <Copy className="h-4 w-4" />
-        )}
-      </button>
-    </div>
   );
 }

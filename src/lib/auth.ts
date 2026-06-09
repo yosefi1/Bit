@@ -3,6 +3,7 @@ import CredentialsProvider from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma";
 import { writeAuditLog } from "./audit";
+import { normalizeUsername } from "./username";
 import type { Role } from "@prisma/client";
 
 /**
@@ -29,7 +30,7 @@ export const authOptions: NextAuthOptions = {
         if (!credentials?.username || !credentials.password) return null;
 
         const user = await prisma.user.findUnique({
-          where: { username: credentials.username.trim().toLowerCase() },
+          where: { username: normalizeUsername(credentials.username) },
         });
         if (!user) return null;
         if (user.status !== "ACTIVE") return null;

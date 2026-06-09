@@ -2,39 +2,59 @@ import { createWorker } from "tesseract.js";
 
 export interface OcrResult {
   reading: number | null;
-  confidence: number | null; // 0..1
+  confidence: number | null;
   rawText: string;
   provider: "tesseract" | "openai" | "none";
 }
 
-/**
- * Heuristic: pick the longest run of digits (with optional decimal point)
- * from raw OCR text. Meter readouts are usually the most prominent number
- * in the picture, so this works surprisingly well across noisy frames.
- */
-function extractMeterNumber(text: string): number | null {
-  if (!text) return null;
-  // Find sequences like 12345, 12345.6, 01234, etc.
+export interface OcrOptions {
+  /** Previous meter reading — helps pick the most likely candidate. */
+  previousReading?: number;
+}
+
+function extractAllNumbers(text: string): number[] {
+  if (!text) return [];
   const matches = text.match(/\d{2,8}(?:[.,]\d{1,3})?/g);
-  if (!matches?.length) return null;
+  if (!matches?.length) return [];
+  const nums: number[] = [];
+  for (const m of matches) {
+    const n = Number(m.replace(",", "."));
+    if (Number.isFinite(n)) nums.push(n);
+  }
+  return nums;
+}
 
-  // Prefer the longest sequence; if tie, prefer the one with a decimal.
-  matches.sort((a, b) => {
-    const lenDiff = b.replace(/\D/g, "").length - a.replace(/\D/g, "").length;
+function pickBestReading(candidates: number[], previousReading?: number): number | null {
+  if (!candidates.length) return null;
+  const unique = [...new Set(candidates)];
+
+  if (previousReading != null && Number.isFinite(previousReading)) {
+    const abovePrev = unique.filter((n) => n >= previousReading);
+    if (abovePrev.length) {
+      abovePrev.sort(
+        (a, b) =>
+          Math.abs(a - previousReading) - Math.abs(b - previousReading) ||
+          b - a
+      );
+      return abovePrev[0];
+    }
+  }
+
+  unique.sort((a, b) => {
+    const lenDiff = String(Math.trunc(b)).length - String(Math.trunc(a)).length;
     if (lenDiff !== 0) return lenDiff;
-    return Number(b.includes(".") || b.includes(",")) -
-      Number(a.includes(".") || a.includes(","));
+    return b - a;
   });
+  return unique[0];
+}
 
-  const best = matches[0].replace(",", ".");
-  const n = Number(best);
-  return Number.isFinite(n) ? n : null;
+function extractMeterNumber(text: string, previousReading?: number): number | null {
+  return pickBestReading(extractAllNumbers(text), previousReading);
 }
 
 function tesseractOptions() {
   const base = { logger: () => {} };
   if (!process.env.VERCEL) return base;
-  // Load workers from CDN — bundled paths break on Vercel serverless.
   return {
     ...base,
     workerPath:
@@ -45,18 +65,19 @@ function tesseractOptions() {
   };
 }
 
-async function runTesseract(buffer: Buffer): Promise<OcrResult> {
+async function runTesseract(
+  buffer: Buffer,
+  previousReading?: number
+): Promise<OcrResult> {
   const worker = await createWorker("eng", 1, tesseractOptions());
   try {
-    // Tesseract is most accurate on meter digits when we restrict to digits.
     await worker.setParameters({
       tessedit_char_whitelist: "0123456789.,",
     });
     const { data } = await worker.recognize(buffer);
-    const reading = extractMeterNumber(data.text);
+    const reading = extractMeterNumber(data.text, previousReading);
     return {
       reading,
-      // Tesseract reports 0..100; normalize to 0..1
       confidence: data.confidence != null ? data.confidence / 100 : null,
       rawText: data.text,
       provider: "tesseract",
@@ -68,12 +89,17 @@ async function runTesseract(buffer: Buffer): Promise<OcrResult> {
 
 async function runOpenAIVision(
   buffer: Buffer,
-  contentType: string
+  contentType: string,
+  previousReading?: number
 ): Promise<OcrResult | null> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
 
   try {
+    const prevHint =
+      previousReading != null
+        ? ` The previous cumulative reading was ${previousReading} kWh — return a value >= that.`
+        : "";
     const dataUrl = `data:${contentType || "image/jpeg"};base64,${buffer.toString("base64")}`;
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -87,13 +113,14 @@ async function runOpenAIVision(
           {
             role: "system",
             content:
-              "You read electricity meter displays. Return ONLY the integer or decimal kWh value visible on the meter. No words, no units. If multiple values are visible, return the main cumulative kWh reading. If unreadable, return UNKNOWN.",
+              "You read Israeli electricity meter LCD displays. Return ONLY the main cumulative kWh number (digits and optional decimal). No units." +
+              prevHint,
           },
           {
             role: "user",
             content: [
-              { type: "text", text: "Read this electricity meter." },
-              { type: "image_url", image_url: { url: dataUrl } },
+              { type: "text", text: "Read the kWh reading on this meter." },
+              { type: "image_url", image_url: { url: dataUrl, detail: "high" } },
             ],
           },
         ],
@@ -107,18 +134,12 @@ async function runOpenAIVision(
     };
     const text = json.choices?.[0]?.message?.content?.trim() ?? "";
     if (!text || /unknown/i.test(text)) {
-      return {
-        reading: null,
-        confidence: null,
-        rawText: text,
-        provider: "openai",
-      };
+      return { reading: null, confidence: null, rawText: text, provider: "openai" };
     }
-    const reading = extractMeterNumber(text);
+    const reading = extractMeterNumber(text, previousReading);
     return {
       reading,
-      // Vision models don't return confidence; treat a clean numeric response as high.
-      confidence: reading != null ? 0.9 : null,
+      confidence: reading != null ? 0.92 : null,
       rawText: text,
       provider: "openai",
     };
@@ -128,22 +149,17 @@ async function runOpenAIVision(
   }
 }
 
-/**
- * Run OCR on a meter image, returning the detected number, confidence,
- * raw text, and which provider was used. The final, authoritative reading
- * is always the tenant-confirmed value — OCR is a starting guess.
- */
 export async function readMeterFromImage(
   buffer: Buffer,
-  contentType: string
+  contentType: string,
+  opts: OcrOptions = {}
 ): Promise<OcrResult> {
-  // Prefer OpenAI vision when configured, falling back to Tesseract.
-  const openai = await runOpenAIVision(buffer, contentType);
-  if (openai && openai.reading != null) return openai;
+  const { previousReading } = opts;
+  const openai = await runOpenAIVision(buffer, contentType, previousReading);
+  if (openai?.reading != null) return openai;
 
   try {
-    const tess = await runTesseract(buffer);
-    // If OpenAI returned text but no number, prefer Tesseract's reading if found.
+    const tess = await runTesseract(buffer, previousReading);
     if (openai && tess.reading == null) return openai;
     return tess;
   } catch (err) {

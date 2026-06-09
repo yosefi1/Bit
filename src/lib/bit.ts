@@ -1,17 +1,19 @@
 /**
- * Bit (the Israeli P2P payment app) does not currently expose a public
- * deep-link spec for pre-filling amounts. The best we can do is:
- *
- *   1. Show the user the exact amount, phone number, and recipient name
- *      so they can confirm in the Bit app.
- *   2. Open Bit via a `tel:` link on mobile (jumps to the dialer where
- *      the user can paste the number into Bit), or the Bit website on
- *      desktop.
- *
- * If/when Bit publishes a deep-link spec, only this file needs to change.
+ * Bit payment config (server). Opening the app with pre-filled amount is not
+ * supported by Bit's public P2P API — see bit-utils.ts for clipboard + app link.
  */
 
 import { prisma } from "./prisma";
+import {
+  buildBitClipboardText,
+  buildBitOpenUrl,
+  formatBitPhone,
+  BIT_WEBSITE,
+  type BitPaymentDetails,
+} from "./bit-utils";
+
+export type { BitPaymentDetails };
+export { buildBitClipboardText, buildBitOpenUrl, formatBitPhone, BIT_WEBSITE };
 
 export interface BitConfig {
   phone: string;
@@ -29,8 +31,7 @@ const DEFAULTS: BitConfig = {
   phone: process.env.BIT_PHONE ?? "0500000000",
   name: process.env.BIT_RECIPIENT_NAME ?? "בעל הדירות",
   instructions:
-    "פתח את אפליקציית ביט, שלח את הסכום המוצג למספר הטלפון, " +
-    "והוסף את שם הדירה בהערה. לאחר השליחה סמן את הדיווח כשולם.",
+    "לחץ «פתיחת ביט» — הסכום והפרטים יועתקו. הדבק/אשר בביט ושלח.",
 };
 
 export async function getBitConfig(): Promise<BitConfig> {
@@ -61,17 +62,3 @@ export async function setBitConfig(cfg: Partial<BitConfig>): Promise<BitConfig> 
   }
   return getBitConfig();
 }
-
-/**
- * Best-effort link to open Bit. On mobile, `tel:` opens the dialer where the
- * user can paste/use the number. On desktop, we link to bitpay.co.il.
- *
- * If Bit later publishes a proper deep link (e.g. `bit://send?phone=...&amount=...`),
- * update `buildBitPayUrl` accordingly.
- */
-export function buildBitPayUrl(opts: { phone: string; amount: number }): string {
-  const phone = opts.phone.replace(/\D/g, "");
-  return `tel:${phone}`;
-}
-
-export const BIT_WEBSITE = "https://www.bitpay.co.il/";

@@ -73,12 +73,6 @@ export async function POST(req: NextRequest) {
       where: { apartmentId, billingCycleId: cycle.id, status: { not: "REJECTED" } },
     });
     if (existing)
-      throw new ApiError(
-        "CONFLICT",
-        "You have already submitted a reading for this billing cycle."
-      );
-
-    if (existing)
       throw new ApiError("CONFLICT", he.errors.alreadySubmitted);
 
     const previousReading = await getPreviousReadingForApartment(apartmentId);
@@ -89,8 +83,6 @@ export async function POST(req: NextRequest) {
       ratePerKwh,
     });
 
-    // Sanity guard against bizarre values (e.g. a typo: 999999 vs 9999).
-    // Allow up to 10x the cycle's per-apartment fair share.
     const apartmentCount = await prisma.apartment.count({
       where: { status: "ACTIVE" },
     });
@@ -99,23 +91,36 @@ export async function POST(req: NextRequest) {
       throw new ApiError("BAD_REQUEST", he.errors.consumptionTooHigh);
     }
 
-    const submission = await prisma.submission.create({
-      data: {
-        apartmentId,
-        billingCycleId: cycle.id,
-        previousReading,
-        ocrReading: input.ocrReading ?? null,
-        ocrConfidence: input.ocrConfidence ?? null,
-        ocrRawText: input.ocrRawText ?? null,
-        confirmedReading: input.confirmedReading,
-        consumption,
-        ratePerKwh,
-        amountDue,
-        imageUrl: input.imageUrl ?? null,
-        imageOriginalName: input.imageOriginalName ?? null,
-        status: "PENDING",
-      },
-      include: { apartment: true, billingCycle: true },
+    const submission = await prisma.$transaction(async (tx) => {
+      const created = await tx.submission.create({
+        data: {
+          apartmentId,
+          billingCycleId: cycle.id,
+          previousReading,
+          ocrReading: input.ocrReading ?? null,
+          ocrConfidence: input.ocrConfidence ?? null,
+          ocrRawText: input.ocrRawText ?? null,
+          confirmedReading: input.confirmedReading,
+          consumption,
+          ratePerKwh,
+          amountDue,
+          imageUrl: input.imageUrl ?? null,
+          imageOriginalName: input.imageOriginalName ?? null,
+          status: "APPROVED",
+          reviewedAt: new Date(),
+        },
+        include: { apartment: true, billingCycle: true },
+      });
+
+      await tx.payment.create({
+        data: {
+          submissionId: created.id,
+          amount: amountDue,
+          status: "PENDING",
+        },
+      });
+
+      return created;
     });
 
     await writeAuditLog({

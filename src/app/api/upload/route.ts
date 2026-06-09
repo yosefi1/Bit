@@ -3,18 +3,17 @@ import { requireSession } from "@/lib/session";
 import { ApiError, errorResponse, ok } from "@/lib/api";
 import { saveImage } from "@/lib/storage";
 import { readMeterFromImage } from "@/lib/ocr";
+import { getPreviousReadingForApartment } from "@/lib/billing";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-/**
- * Handles meter image upload + OCR in one shot.
- *
- *   POST /api/upload   (multipart/form-data, field name = "file")
- */
 export async function POST(req: NextRequest) {
   try {
-    await requireSession();
+    const session = await requireSession();
+    if (session.user.role !== "TENANT" || !session.user.apartmentId) {
+      throw new ApiError("FORBIDDEN", "נדרשת הרשאת דייר.");
+    }
 
     const form = await req.formData();
     const file = form.get("file");
@@ -31,8 +30,12 @@ export async function POST(req: NextRequest) {
       throw new ApiError("BAD_REQUEST", "Only image files are allowed.");
     }
 
+    const apartmentId = session.user.apartmentId;
+    const previousReading = await getPreviousReadingForApartment(apartmentId);
     const buf = Buffer.from(await file.arrayBuffer());
-    const ocr = await readMeterFromImage(buf, file.type || "image/jpeg");
+    const ocr = await readMeterFromImage(buf, file.type || "image/jpeg", {
+      previousReading,
+    });
 
     const stored = await saveImage(file, { folder: "meters" });
 
@@ -53,7 +56,7 @@ export async function POST(req: NextRequest) {
       ocr,
       storageWarning: stored
         ? null
-        : "Image not saved — connect Vercel Blob in Storage for photo retention.",
+        : "התמונה לא נשמרה — ודא ש-Vercel Blob מחובר ועשה Redeploy.",
     });
   } catch (err) {
     return errorResponse(err);

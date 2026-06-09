@@ -1,6 +1,15 @@
 import { z } from "zod";
+import { USERNAME_REGEX, normalizeUsername } from "./username";
 
-/* ----------------------------- Apartments ------------------------------ */
+const usernameSchema = z
+  .string()
+  .trim()
+  .min(3)
+  .max(40)
+  .refine((v) => USERNAME_REGEX.test(v.normalize("NFC")), {
+    message: "שם משתמש: אותיות (עברית/לatin), מספרים, . _ -",
+  })
+  .transform(normalizeUsername);
 
 export const apartmentCreateSchema = z.object({
   name: z.string().trim().min(1).max(100),
@@ -10,13 +19,7 @@ export const apartmentCreateSchema = z.object({
   tenant: z
     .object({
       name: z.string().trim().min(1).max(200),
-      username: z
-        .string()
-        .trim()
-        .toLowerCase()
-        .min(3)
-        .max(40)
-        .regex(/^[a-z0-9._-]+$/i, "Username may contain letters, numbers, . _ -"),
+      username: usernameSchema,
       password: z.string().min(6).max(200),
       email: z.string().trim().email().optional().nullable(),
     })
@@ -34,14 +37,7 @@ export type ApartmentUpdateInput = z.infer<typeof apartmentUpdateSchema>;
 
 export const tenantUpdateSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
-  username: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .min(3)
-    .max(40)
-    .regex(/^[a-z0-9._-]+$/i)
-    .optional(),
+  username: usernameSchema.optional(),
   password: z.string().min(6).max(200).optional(),
   email: z.string().trim().email().optional().nullable(),
   status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
@@ -49,13 +45,7 @@ export const tenantUpdateSchema = z.object({
 
 export const tenantAssignSchema = z.object({
   name: z.string().trim().min(1).max(200),
-  username: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .min(3)
-    .max(40)
-    .regex(/^[a-z0-9._-]+$/i),
+  username: usernameSchema,
   password: z.string().min(6).max(200),
   email: z.string().trim().email().optional().nullable(),
 });

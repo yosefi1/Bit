@@ -13,7 +13,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
         role="ADMIN"
         nav={ADMIN_NAV}
       />
-      <main className="mx-auto max-w-7xl px-4 py-8">{children}</main>
+      <main className="mx-auto max-w-7xl px-3 py-6 sm:px-4 sm:py-8">{children}</main>
     </div>
   );
 }

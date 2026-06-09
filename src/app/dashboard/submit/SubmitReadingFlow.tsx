@@ -173,7 +173,7 @@ export function SubmitReadingFlow({
         setError(data?.error?.message || he.submit.submissionFailed);
         return;
       }
-      router.push(`/dashboard/submission/${data.submission.id}?just=1`);
+      router.push(`/dashboard/submission/${data.submission.id}?just=1#pay`);
       router.refresh();
     } finally {
       setSubmitting(false);

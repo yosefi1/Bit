@@ -32,6 +32,7 @@ export default async function TenantSubmissionPage({
   if (submission.apartmentId !== session.user.apartmentId) notFound();
 
   const bit = await getBitConfig();
+  const showPay = submission.status === "APPROVED" && submission.payment;
 
   return (
     <div>
@@ -54,8 +55,20 @@ export default async function TenantSubmissionPage({
         </Alert>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <div className="lg:col-span-2 space-y-4">
+      <div className="flex flex-col gap-6 lg:grid lg:grid-cols-3">
+        {showPay && (
+          <div id="pay" className="order-1 lg:order-2 lg:col-span-1">
+            <PayWithBit
+              submissionId={submission.id}
+              amount={submission.payment!.amount}
+              apartmentName={submission.apartment.name}
+              status={submission.payment!.status}
+              bit={bit}
+            />
+          </div>
+        )}
+
+        <div className="order-2 space-y-4 lg:order-1 lg:col-span-2">
           <Card>
             <CardHeader>
               <CardTitle>{he.tenant.calculation}</CardTitle>
@@ -96,7 +109,7 @@ export default async function TenantSubmissionPage({
             </CardBody>
           </Card>
 
-          {submission.imageUrl && (
+          {submission.imageUrl ? (
             <Card>
               <CardHeader>
                 <CardTitle>{he.tenant.meterPhoto}</CardTitle>
@@ -109,34 +122,36 @@ export default async function TenantSubmissionPage({
                   className="block overflow-hidden rounded-lg border border-slate-200"
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img src={submission.imageUrl} alt={he.tenant.meterPhoto} className="w-full" />
+                  <img
+                    src={submission.imageUrl}
+                    alt={he.tenant.meterPhoto}
+                    className="max-h-96 w-full object-contain"
+                  />
                 </a>
               </CardBody>
             </Card>
+          ) : (
+            <Alert tone="warning" title={he.tenant.noMeterPhoto}>
+              {he.tenant.noMeterPhotoDesc}
+            </Alert>
           )}
         </div>
 
-        <div id="pay" className="space-y-4">
-          {submission.status === "APPROVED" && submission.payment ? (
-            <PayWithBit
-              submissionId={submission.id}
-              amount={submission.payment.amount}
-              apartmentName={submission.apartment.name}
-              status={submission.payment.status}
-              bit={bit}
-            />
-          ) : submission.status === "PENDING" ? (
-            <Alert tone="info" title={he.tenant.waitingApproval}>
-              {he.tenant.waitingApprovalDesc}
-            </Alert>
-          ) : (
-            <Alert tone="warning" title={he.tenant.noPaymentDue}>
-              {submission.status === "REJECTED"
-                ? he.tenant.rejectedCorrect
-                : he.tenant.noPaymentAssoc}
-            </Alert>
-          )}
-        </div>
+        {!showPay && (
+          <div className="order-3 lg:col-span-1">
+            {submission.status === "PENDING" ? (
+              <Alert tone="info" title={he.tenant.waitingApproval}>
+                {he.tenant.waitingApprovalDesc}
+              </Alert>
+            ) : (
+              <Alert tone="warning" title={he.tenant.noPaymentDue}>
+                {submission.status === "REJECTED"
+                  ? he.tenant.rejectedCorrect
+                  : he.tenant.noPaymentAssoc}
+              </Alert>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

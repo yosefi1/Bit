@@ -16,7 +16,7 @@ export default async function TenantLayout({ children }: { children: ReactNode }
         role="TENANT"
         nav={TENANT_NAV}
       />
-      <main className="mx-auto max-w-5xl px-4 py-8">{children}</main>
+      <main className="mx-auto max-w-5xl px-3 py-6 sm:px-4 sm:py-8">{children}</main>
     </div>
   );
 }
