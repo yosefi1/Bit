@@ -8,8 +8,7 @@ Import את `yosefi1/Bit`. הוסף:
 
 | משתנה | מאיפה |
 |--------|--------|
-| `DATABASE_URL` | מ-Storage (Pooled / Prisma) |
-| `DIRECT_URL` | מ-Storage (Direct / Non-pooled) |
+| `DATABASE_URL` | מ-Neon (Connection string) |
 | `NEXTAUTH_SECRET` | מחרוזת אקראית ארוכה |
 | `NEXTAUTH_URL` | `https://YOUR-APP.vercel.app` |
 | `BIT_PHONE` | מספר הביט שלך |
@@ -23,8 +22,7 @@ Import את `yosefi1/Bit`. הוסף:
 
 ```powershell
 cd C:\Projects\BIT
-$env:DATABASE_URL="..."   # אותו connection string מ-Vercel
-$env:DIRECT_URL="..."
+$env:DATABASE_URL="..."   # מ-Vercel / Neon
 npm run db:seed
 ```
 
